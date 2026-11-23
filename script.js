@@ -713,6 +713,15 @@ const Calc = {
       const mode = state.settings.rolloverMode === 'spread' ? 'spread' : 'nextDay';
       const today = DateUtils.today();
 
+      // في الشهر الحالي تُربط ميزانية اليوم والأيام القادمة بالرصيد الفعلي للحساب الرئيسي:
+      // المتاح من اليوم حتى نهاية الشهر = الرصيد (قبل مصروف اليوم) − المصاريف الشهرية غير المدفوعة − المبلغ المستهدف.
+      // هكذا تدخل في الحسبة أي مبالغ وصلت للحساب (سحب من صندوق، أموال إضافية، فائض شهر سابق).
+      const anchorToBalance = Data.isCurrent(month) && today >= trackFrom;
+      const anchorAvail = anchorToBalance
+        ? Utils.round2(Calc.balances().main + (spentMap[today] || 0) - (fixedTotal - fixedPaid) - month.retainTarget)
+        : 0;
+      let adjust = 0;
+
       const rows = [];
       let remainingPool = distributable;
       let carry = 0;
@@ -747,8 +756,18 @@ const Calc = {
           continue;
         }
 
+        if (anchorToBalance && date === today) {
+          const modelAvail = mode === 'spread' ? distributable - spentSoFar - outSoFar : remainingPool + carry;
+          adjust = anchorAvail - modelAvail;
+          if (mode === 'nextDay') {
+            // نحافظ على الفائض المرحّل لليوم بشرط ألا يتجاوز المتاح الفعلي
+            carry = Math.min(carry, Math.max(0, anchorAvail));
+            remainingPool = anchorAvail - carry;
+          }
+        }
+
         if (mode === 'spread') {
-          base = Math.max(0, (distributable - spentSoFar - outSoFar) / daysLeft);
+          base = Math.max(0, (distributable + adjust - spentSoFar - outSoFar) / daysLeft);
           allowance = base;
         } else {
           base = Math.max(0, remainingPool / daysLeft);
@@ -782,6 +801,10 @@ const Calc = {
 
       const dailySpent = Utils.round2(spentSoFar + priorSpent);
       const trackedDays = DateUtils.diffDays(trackFrom, month.end) + 1;
+      // فرق الرصيد الفعلي عن حسبة الراتب (مبالغ دخلت أو خرجت من الحساب خارج الميزانية)
+      const balanceAdjust = Utils.round2(adjust);
+      const effPool = Utils.round2(pool + balanceAdjust);
+      const effDailyPool = Math.max(0, effPool);
       return {
         trackFrom,
         priorSpent,
@@ -792,20 +815,25 @@ const Calc = {
         fixedPaid,
         fixedUnpaid: Utils.round2(fixedTotal - fixedPaid),
         boosts,
-        pool,
-        dailyPool: Utils.round2(dailyPool),
+        pool: effPool,
+        dailyPool: Utils.round2(effDailyPool),
         dailySpent,
-        dailyRemaining: Utils.round2(dailyPool - dailySpent),
-        perDayBase: Utils.round2(Math.max(0, distributable - outflows) / Math.max(1, trackedDays)),
+        dailyRemaining: Utils.round2(effDailyPool - dailySpent),
+        perDayBase: Utils.round2(Math.max(0, distributable + balanceAdjust - outflows) / Math.max(1, trackedDays)),
         rows,
         mode,
         // المتبقي من الراتب هذا الشهر = الراتب − الثابتة − اليومية
-        remaining: Utils.round2(income - fixedTotal - outflows - dailySpent),
+        remaining: Utils.round2(income + balanceAdjust - fixedTotal - outflows - dailySpent),
         // المتوقع في نهاية الشهر إذا التزم المستخدم بالميزانية
-        expectedLeft: Utils.round2(income - fixedTotal - outflows - Math.max(dailyPool, dailySpent)),
+        expectedLeft: Utils.round2(income + balanceAdjust - fixedTotal - outflows - Math.max(effDailyPool, dailySpent)),
         opening,
-        // سبب انعدام الميزانية: (الراتب + الرصيد السابق) − الثابتة − المستهدف − المصروف السابق − المحوّل
-        shortfall: Utils.round2(Math.max(0, -(grossPool - priorSpent - outflows))),
+        anchored: anchorToBalance,
+        balanceAdjust,
+        anchorAvail,
+        // سبب انعدام الميزانية
+        shortfall: anchorToBalance
+          ? Utils.round2(Math.max(0, -anchorAvail))
+          : Utils.round2(Math.max(0, -(grossPool - priorSpent - outflows))),
       };
     });
   },
@@ -1348,7 +1376,8 @@ const Pages = {
     const poolTone = b.dailySpent > b.dailyPool ? 'over' : poolUsedPct > 85 ? 'near' : 'good';
 
     return `
-      ${b.shortfall > 0 ? `<div class="callout danger" style="margin-bottom:16px">${Utils.icon('alert')}<p>لا توجد ميزانية للمصروف اليومي هذا الشهر: الراتب ${Utils.money(month.salary)}${b.opening > 0 ? ` + الرصيد السابق ${Utils.money(b.opening)}` : ''}${b.boosts > 0 ? ` + إضافات ${Utils.money(b.boosts)}` : ''} − المصاريف الشهرية ${Utils.money(b.fixedTotal)}${b.fixedUnpaid > 0 ? ` (غير المدفوع منها ${Utils.money(b.fixedUnpaid)})` : ''} − المستهدف ${Utils.money(month.retainTarget)}${b.priorSpent > 0 ? ` − المصروف قبل بدء التسجيل ${Utils.money(b.priorSpent)}` : ''}${b.outflows > 0 ? ` − المحوّل للصناديق ${Utils.money(b.outflows)}` : ''} = عجز ${Utils.money(b.shortfall)}. خفّض المبلغ المستهدف أو راجع المصاريف الشهرية (إذا كانت مدفوعة ضمن المصروف السابق فعلّمها كمدفوعة واخصمها من المصروف السابق).</p></div>` : ''}
+      ${b.shortfall > 0 && b.anchored ? `<div class="callout danger" style="margin-bottom:16px">${Utils.icon('alert')}<p>لا يوجد متاح للمصروف اليومي: الرصيد الحالي ${Utils.money(bal.main + row.spent)}${b.fixedUnpaid > 0 ? ` − مصاريف شهرية لم تُدفع ${Utils.money(b.fixedUnpaid)}` : ''} − المستهدف ${Utils.money(month.retainTarget)} = عجز ${Utils.money(b.shortfall)}.</p></div>` : ''}
+      ${b.shortfall > 0 && !b.anchored ? `<div class="callout danger" style="margin-bottom:16px">${Utils.icon('alert')}<p>لا توجد ميزانية للمصروف اليومي هذا الشهر: الراتب ${Utils.money(month.salary)}${b.opening > 0 ? ` + الرصيد السابق ${Utils.money(b.opening)}` : ''}${b.boosts > 0 ? ` + إضافات ${Utils.money(b.boosts)}` : ''} − المصاريف الشهرية ${Utils.money(b.fixedTotal)}${b.fixedUnpaid > 0 ? ` (غير المدفوع منها ${Utils.money(b.fixedUnpaid)})` : ''} − المستهدف ${Utils.money(month.retainTarget)}${b.priorSpent > 0 ? ` − المصروف قبل بدء التسجيل ${Utils.money(b.priorSpent)}` : ''}${b.outflows > 0 ? ` − المحوّل للصناديق ${Utils.money(b.outflows)}` : ''} = عجز ${Utils.money(b.shortfall)}. خفّض المبلغ المستهدف أو راجع المصاريف الشهرية (إذا كانت مدفوعة ضمن المصروف السابق فعلّمها كمدفوعة واخصمها من المصروف السابق).</p></div>` : ''}
 
       <div class="dash-top">
         <section class="hero status-${status}" aria-label="ميزانية اليوم">
@@ -1406,7 +1435,7 @@ const Pages = {
               <div class="detail-box"><span>المتبقي للأيام القادمة</span><strong class="${b.dailyRemaining < 0 ? 'over-text' : ''}">${Utils.money(b.dailyRemaining)}</strong></div>
               <div class="detail-box"><span>الحصة الأساسية يوميًا</span><strong>${Utils.money(b.perDayBase)}</strong></div>
             </div>
-            ${b.outflows > 0 || b.opening > 0 ? `<p class="field-hint" style="margin:-6px 0 12px">الراتب ${Utils.money(month.salary)}${b.opening > 0 ? ` + الرصيد السابق ${Utils.money(b.opening)}` : ''} − المصاريف الشهرية ${Utils.money(b.fixedTotal)} − المستهدف ${Utils.money(month.retainTarget)} − المحوّل للصناديق ${Utils.money(b.outflows)}${b.boosts > 0 ? ` + إضافات ${Utils.money(b.boosts)}` : ''}</p>` : ''}
+            ${b.anchored ? `<p class="field-hint" style="margin:-6px 0 12px">ميزانية اليوم والأيام القادمة = الرصيد الحالي ${Utils.money(bal.main + row.spent)}${b.fixedUnpaid > 0 ? ` − مصاريف شهرية لم تُدفع ${Utils.money(b.fixedUnpaid)}` : ''} − المستهدف ${Utils.money(month.retainTarget)} = ${Utils.money(Math.max(0, b.anchorAvail))} مقسومة على ${daysLeft === 1 ? 'يوم واحد' : daysLeft === 2 ? 'يومين' : `${daysLeft} ${daysLeft <= 10 ? 'أيام' : 'يومًا'}`}</p>` : b.outflows > 0 || b.opening > 0 ? `<p class="field-hint" style="margin:-6px 0 12px">الراتب ${Utils.money(month.salary)}${b.opening > 0 ? ` + الرصيد السابق ${Utils.money(b.opening)}` : ''} − المصاريف الشهرية ${Utils.money(b.fixedTotal)} − المستهدف ${Utils.money(month.retainTarget)} − المحوّل للصناديق ${Utils.money(b.outflows)}${b.boosts > 0 ? ` + إضافات ${Utils.money(b.boosts)}` : ''}</p>` : ''}
             ${C.progress(poolUsedPct, poolTone)}
             <div class="progress-meta"><span>استهلكت ${poolUsedPct.toFixed(0)}% من ميزانية المصروف اليومي</span><span>${Utils.percent(b.totalDays - daysLeft + 1, b.totalDays).toFixed(0)}% من الشهر</span></div>
           </section>

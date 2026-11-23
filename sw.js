@@ -1,6 +1,6 @@
 /* Service Worker — يتيح عمل "إدارة المال" دون اتصال بالإنترنت بعد أول زيارة.
    لا يرسل أي بيانات؛ يخزن ملفات التطبيق فقط في ذاكرة المتصفح. */
-const CACHE = 'money-management-v5';
+const CACHE = 'money-management-v6';
 const ASSETS = ['./', './index.html', './style.css', './script.js', './manifest.json', './assets/icons/icon.svg', './assets/icons/apple-touch-icon.png', './assets/icons/icon-192.png', './assets/icons/icon-512.png', './assets/icons/icon-maskable-512.png', './assets/icons/shortcut-add-96.png', './assets/icons/favicon-32.png'];
 
 self.addEventListener('install', (event) => {
@@ -15,7 +15,8 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Stale-while-revalidate: عرض النسخة المخزنة فورًا وتحديثها في الخلفية
+// ملفات التطبيق: الشبكة أولًا (حتى تصل التحديثات فورًا) ثم النسخة المخزنة عند انقطاع الإنترنت.
+// الخطوط: النسخة المخزنة أولًا.
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
@@ -25,14 +26,15 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(request, { ignoreSearch: url.origin === self.location.origin });
-      const network = fetch(request)
-        .then((res) => {
-          if (res && (res.ok || res.type === 'opaque')) cache.put(request, res.clone());
-          return res;
-        })
-        .catch(() => cached || (request.mode === 'navigate' ? cache.match('./index.html') : undefined));
-      return cached || network;
+      const cached = await cache.match(request, { ignoreSearch: !isFont });
+      if (isFont && cached) return cached;
+      try {
+        const res = await fetch(request, isFont ? undefined : { cache: 'no-cache' });
+        if (res && (res.ok || res.type === 'opaque')) cache.put(request, res.clone());
+        return res;
+      } catch (e) {
+        return cached || (request.mode === 'navigate' ? cache.match('./index.html') : Response.error());
+      }
     })
   );
 });
