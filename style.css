@@ -352,6 +352,9 @@ body.is-setup .main { padding-bottom: 32px; }
 .kpi.tone-gold .kpi-icon { background: var(--gold-soft); color: var(--gold); }
 a.kpi { transition: border-color var(--dur), transform var(--dur); }
 a.kpi:hover { border-color: var(--border-strong); }
+button.kpi { width: 100%; text-align: right; font: inherit; color: inherit; cursor: pointer; transition: border-color var(--dur); }
+button.kpi:hover { border-color: var(--border-strong); }
+.kpi-hint .icon { display: inline-block; width: 12px; height: 12px; vertical-align: -2px; }
 
 /* ---------- 7. Hero (today budget) ---------- */
 .hero {

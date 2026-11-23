@@ -869,6 +869,9 @@ const Calc = {
       } else if (t.type === 'transfer') {
         if (t.from in b) b[t.from] -= t.amount;
         if (t.to in b) b[t.to] += t.amount;
+      } else if (t.type === 'adjust') {
+        // تسوية الرصيد يدويًا ليطابق الواقع
+        if (t.account in b) b[t.account] += t.direction === 'in' ? t.amount : -t.amount;
       }
     });
 
@@ -1076,10 +1079,11 @@ const UI = {
    8. Components — عناصر قابلة لإعادة الاستخدام
    ========================================================= */
 const C = {
-  kpi({ label, value, icon, tone = '', hint = '', href = '' }) {
-    const tag = href ? 'a' : 'div';
+  kpi({ label, value, icon, tone = '', hint = '', href = '', action = '' }) {
+    const tag = href ? 'a' : action ? 'button' : 'div';
+    const attrs = href ? `href="${href}"` : action ? `type="button" data-action="${action}"` : '';
     return `
-      <${tag} class="kpi ${tone ? 'tone-' + tone : ''}" ${href ? `href="${href}"` : ''}>
+      <${tag} class="kpi ${tone ? 'tone-' + tone : ''} ${action ? 'kpi-action' : ''}" ${attrs}>
         <div class="kpi-top">
           <span class="kpi-icon">${Utils.icon(icon)}</span>
           <span class="kpi-label">${label}</span>
@@ -1402,7 +1406,7 @@ const Pages = {
 
         <div class="kpi-grid">
           ${C.kpi({ label: 'الراتب', value: Utils.money(month.salary), icon: 'coins', tone: 'primary', hint: `يوم ${state.settings.payday} من كل شهر` })}
-          ${C.kpi({ label: 'الرصيد الحالي', value: Utils.money(bal.main), icon: 'wallet', tone: bal.main < 0 ? 'over' : 'good', hint: 'الحساب الرئيسي' })}
+          ${C.kpi({ label: 'الرصيد الحالي', value: Utils.money(bal.main), icon: 'wallet', tone: bal.main < 0 ? 'over' : 'good', hint: `الحساب الرئيسي · ${Utils.icon('edit', 'icon-sm')} اضغط للتعديل`, action: 'adjust-balance' })}
           ${C.kpi({ label: 'المصاريف الشهرية', value: Utils.money(b.fixedTotal), icon: 'repeat', tone: 'info', hint: `مدفوع ${paidCount} من ${month.fixedItems.length}`, href: '#fixed' })}
           ${C.kpi({ label: 'مصروف اليوم', value: Utils.money(row.spent), icon: 'receipt', tone: status, hint: `من ${Utils.money(row.allowance)}` })}
         </div>
@@ -2589,6 +2593,79 @@ const Forms = {
     App.render();
   },
 
+  /* ---------- تعديل الرصيد ليطابق الواقع ---------- */
+  openAdjust() {
+    const current = Calc.balances().main;
+    const history = state.transactions
+      .filter((t) => t.type === 'adjust')
+      .sort((a, c) => (c.date + c.createdAt).localeCompare(a.date + a.createdAt))
+      .slice(0, 5);
+    const reasons = ['مصروفات نسيت تسجيلها', 'مبلغ دخل الحساب', 'رسوم أو خصم بنكي', 'تصحيح خطأ في التسجيل'];
+    const body = `
+      <form class="form" data-form="adjust" novalidate>
+        <div class="balance-banner">
+          <div><div class="bb-label">الرصيد في التطبيق</div><div class="bb-value">${Utils.money(current)}</div></div>
+        </div>
+        ${C.amountField({ name: 'actual', label: 'الرصيد الفعلي في حسابك الآن', big: true, autofocus: true, allowZero: true, hint: 'اكتب الرصيد كما يظهر في تطبيق البنك' })}
+        <div class="field" data-field="reason">
+          <label class="label" for="adjReason">سبب التعديل</label>
+          <div class="chips" style="margin-bottom:8px">
+            ${reasons.map((r) => `<button type="button" class="chip-add" data-action="adjust-reason" data-reason="${Utils.escape(r)}">${Utils.escape(r)}</button>`).join('')}
+          </div>
+          <input id="adjReason" class="input" name="reason" type="text" maxlength="120" placeholder="مثال: مشتريات بقالة لم أسجلها" autocomplete="off">
+          <p class="field-error" data-error-for="reason"></p>
+        </div>
+        <p class="field-hint" style="margin-top:-6px">يُسجَّل الفرق كتسوية بتاريخ اليوم، وتُعاد حسبة ميزانية اليوم والأيام القادمة تلقائيًا.</p>
+        ${C.formActions('تعديل الرصيد')}
+      </form>
+      ${history.length ? `
+        <div class="section">
+          <div class="section-head"><h3 class="section-title">آخر التعديلات</h3></div>
+          <ul class="list">${history.map((t) => `
+            <li class="row">
+              <span class="row-icon">${Utils.icon(t.direction === 'in' ? 'in' : 'out')}</span>
+              <div class="row-main">
+                <div class="row-title">${Utils.escape(t.reason || 'تعديل الرصيد')}</div>
+                <div class="row-sub">${DateUtils.relative(t.date)}</div>
+              </div>
+              <div class="row-end"><div class="row-amount ${t.direction === 'in' ? 'pos' : ''}">${t.direction === 'in' ? '+' : '−'}${Utils.money(t.amount)}</div></div>
+              <div class="row-actions"><button type="button" class="icon-btn icon-btn-sm danger" data-action="delete-adjust" data-id="${t.id}" aria-label="حذف التعديل">${Utils.icon('trash')}</button></div>
+            </li>`).join('')}
+          </ul>
+        </div>` : ''}`;
+    UI.modal({ title: 'تعديل الرصيد الحالي', body });
+  },
+
+  async submitAdjust(form) {
+    const { values, ok } = Forms.validate(form, {
+      actual: (v) => Forms.amount(v, { allowZero: true }),
+      reason: (v) => Forms.text(v, { required: true, max: 120, label: 'سبب التعديل' }),
+    });
+    if (!ok) return;
+    const current = Calc.balances().main;
+    const diff = Utils.round2(values.actual - current);
+    if (Math.abs(diff) < 0.005) {
+      Forms.showErrors(form, { actual: 'الرصيد الفعلي مطابق للرصيد الحالي، لا حاجة للتعديل.' });
+      return;
+    }
+    const confirmed = await UI.confirm({
+      title: 'تأكيد تعديل الرصيد',
+      message: `سيتغير الرصيد من <b>${Utils.money(current)}</b> إلى <b>${Utils.money(values.actual)}</b> (${diff < 0 ? 'خصم' : 'إضافة'} ${Utils.money(Math.abs(diff))}).<br>السبب: ${Utils.escape(values.reason)}`,
+      confirmText: 'تعديل',
+      icon: 'wallet',
+    });
+    if (!confirmed) return;
+    state.transactions.push({
+      id: Utils.uid('adj_'), type: 'adjust', account: 'main',
+      direction: diff > 0 ? 'in' : 'out', amount: Math.abs(diff),
+      reason: values.reason, date: DateUtils.today(), createdAt: new Date().toISOString(),
+    });
+    Store.save('transactions');
+    UI.closeAllModals();
+    UI.toast(`تم تعديل الرصيد إلى ${Utils.money(values.actual)}`);
+    App.render();
+  },
+
   /* ---------- الإعداد الأولي ---------- */
   submitSetup(form) {
     const { values, ok } = Forms.validate(form, {
@@ -2855,6 +2932,30 @@ const Actions = {
     state.transactions = state.transactions.filter((x) => x.id !== id);
     Store.save('transactions');
     UI.toast('تم إلغاء العملية');
+    App.render();
+  },
+
+  'adjust-balance'() { Forms.openAdjust(); },
+
+  'adjust-reason'({ reason }, el) {
+    const input = el.closest('form').querySelector('[name="reason"]');
+    input.value = reason;
+    input.focus();
+  },
+
+  async 'delete-adjust'({ id }) {
+    const t = state.transactions.find((x) => x.id === id && x.type === 'adjust');
+    if (!t) return;
+    const ok = await UI.confirm({
+      title: 'حذف التعديل',
+      message: `سيتم حذف تعديل الرصيد (${t.direction === 'in' ? '+' : '−'}${Utils.money(t.amount)}) وإرجاع الرصيد كما كان قبله.`,
+      confirmText: 'حذف', danger: true, icon: 'trash',
+    });
+    if (!ok) return;
+    state.transactions = state.transactions.filter((x) => x.id !== id);
+    Store.save('transactions');
+    UI.closeAllModals();
+    UI.toast('تم حذف التعديل');
     App.render();
   },
 
@@ -3125,6 +3226,13 @@ const Backup = {
             affectsBudget: !!t.affectsBudget, createdAt: t.createdAt || new Date().toISOString(),
           };
         }
+        if (t.type === 'adjust') {
+          return {
+            id: str(t.id, 40) || Utils.uid('adj_'), type: 'adjust', account: 'main',
+            direction: t.direction === 'in' ? 'in' : 'out', amount: amt(t.amount),
+            reason: str(t.reason, 120), date: t.date, createdAt: t.createdAt || new Date().toISOString(),
+          };
+        }
         return null;
       })
       .filter(Boolean);
@@ -3342,6 +3450,7 @@ const App = {
       month: Forms.submitMonth,
       salary: Forms.submitSalary,
       fund: Forms.submitFund,
+      adjust: Forms.submitAdjust,
       setup: Forms.submitSetup,
       settings: Forms.submitSettings,
       category: (form) => {
