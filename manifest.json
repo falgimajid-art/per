@@ -10,6 +10,58 @@
   "background_color": "#F4F6F3",
   "theme_color": "#0B3B2E",
   "icons": [
-    { "src": "assets/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "id": "./",
+  "shortcuts": [
+    {
+      "name": "إضافة مصروف",
+      "short_name": "مصروف",
+      "description": "فتح نافذة إضافة مصروف مباشرة",
+      "url": "./index.html?action=add-expense",
+      "icons": [
+        {
+          "src": "assets/icons/shortcut-add-96.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "نزل الراتب",
+      "short_name": "الراتب",
+      "description": "تسجيل نزول الراتب وبدء شهر جديد",
+      "url": "./index.html?action=salary",
+      "icons": [
+        {
+          "src": "assets/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
   ]
 }

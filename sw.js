@@ -1,7 +1,7 @@
 /* Service Worker — يتيح عمل "إدارة المال" دون اتصال بالإنترنت بعد أول زيارة.
    لا يرسل أي بيانات؛ يخزن ملفات التطبيق فقط في ذاكرة المتصفح. */
-const CACHE = 'money-management-v3';
-const ASSETS = ['./', './index.html', './style.css', './script.js', './manifest.json', './assets/icons/icon.svg'];
+const CACHE = 'money-management-v5';
+const ASSETS = ['./', './index.html', './style.css', './script.js', './manifest.json', './assets/icons/icon.svg', './assets/icons/apple-touch-icon.png', './assets/icons/icon-192.png', './assets/icons/icon-512.png', './assets/icons/icon-maskable-512.png', './assets/icons/shortcut-add-96.png', './assets/icons/favicon-32.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

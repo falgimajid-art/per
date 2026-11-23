@@ -701,7 +701,11 @@ const Calc = {
       const priorSpent = Utils.safeAmount(month.priorSpent);
       const outMap = Calc.mainOutflowsByDay(month);
       const outflows = Utils.round2(Object.values(outMap).reduce((a, v) => a + v, 0));
-      const grossPool = Utils.round2(month.salary + boosts - fixedTotal - month.retainTarget);
+      // الرصيد السابق في الحساب الرئيسي (قبل أول راتب مسجل) جزء من المال المتاح في أول شهر،
+      // وإلا يظهر الرصيد الفعلي أكبر من المستهدف بينما المتاح لليوم صفر.
+      const opening = month === Data.firstMonth() ? Utils.safeAmount(state.settings.openingBalance) : 0;
+      const income = Utils.round2(month.salary + boosts + opening);
+      const grossPool = Utils.round2(income - fixedTotal - month.retainTarget);
       const pool = Utils.round2(grossPool - outflows);
       const dailyPool = Math.max(0, pool);
       const distributable = Math.max(0, grossPool - priorSpent);
@@ -796,9 +800,12 @@ const Calc = {
         rows,
         mode,
         // المتبقي من الراتب هذا الشهر = الراتب − الثابتة − اليومية
-        remaining: Utils.round2(month.salary + boosts - fixedTotal - outflows - dailySpent),
+        remaining: Utils.round2(income - fixedTotal - outflows - dailySpent),
         // المتوقع في نهاية الشهر إذا التزم المستخدم بالميزانية
-        expectedLeft: Utils.round2(month.salary + boosts - fixedTotal - outflows - Math.max(dailyPool, dailySpent)),
+        expectedLeft: Utils.round2(income - fixedTotal - outflows - Math.max(dailyPool, dailySpent)),
+        opening,
+        // سبب انعدام الميزانية: (الراتب + الرصيد السابق) − الثابتة − المستهدف − المصروف السابق − المحوّل
+        shortfall: Utils.round2(Math.max(0, -(grossPool - priorSpent - outflows))),
       };
     });
   },
@@ -1296,8 +1303,8 @@ const Pages = {
               ${C.amountField({ name: 'emergency', label: 'رصيد صندوق الطوارئ الحالي', required: false })}
               ${C.amountField({ name: 'investment', label: 'رصيد صندوق الاستثمار الحالي', required: false })}
             </div>
-            ${C.amountField({ name: 'priorSpent', label: 'كم صرفت من بداية الشهر المالي الحالي حتى أمس؟ (اختياري)', hint: 'إذا بدأت استخدام التطبيق في منتصف الشهر، يُخصم هذا المبلغ من ميزانية الأيام المتبقية', required: false })}
-            ${C.amountField({ name: 'openingBalance', label: 'رصيد سابق في الحساب الرئيسي (اختياري)', hint: 'أي مبلغ متبقٍ من قبل نزول آخر راتب', required: false })}
+            ${C.amountField({ name: 'priorSpent', label: 'كم صرفت من بداية الشهر المالي الحالي حتى أمس؟ (اختياري)', hint: 'إذا بدأت استخدام التطبيق في منتصف الشهر، يُخصم هذا المبلغ من ميزانية الأيام المتبقية. لا تُدخل فيه المصاريف الشهرية الثابتة (إيجار، أقساط...) لأنها تُحسب وحدها؛ علّمها كمدفوعة بعد إضافتها.', required: false })}
+            ${C.amountField({ name: 'openingBalance', label: 'رصيد سابق في الحساب الرئيسي (اختياري)', hint: 'أي مبلغ متبقٍ من قبل نزول آخر راتب، ويُضاف لميزانية هذا الشهر', required: false })}
             <div class="callout">${Utils.icon('lock')}<p>جميع بياناتك تُحفظ على هذا الجهاز فقط داخل المتصفح، ولا تُرسل إلى أي خادم.</p></div>
             <button type="submit" class="btn btn-primary btn-lg btn-block">ابدأ الآن</button>
           </form>
@@ -1341,7 +1348,7 @@ const Pages = {
     const poolTone = b.dailySpent > b.dailyPool ? 'over' : poolUsedPct > 85 ? 'near' : 'good';
 
     return `
-      ${b.pool < 0 ? `<div class="callout danger" style="margin-bottom:16px">${Utils.icon('alert')}<p>المصاريف الشهرية والمبلغ المستهدف (${Utils.money(b.fixedTotal + month.retainTarget)}) أكبر من الراتب. لا توجد ميزانية للمصروف اليومي هذا الشهر.</p></div>` : ''}
+      ${b.shortfall > 0 ? `<div class="callout danger" style="margin-bottom:16px">${Utils.icon('alert')}<p>لا توجد ميزانية للمصروف اليومي هذا الشهر: الراتب ${Utils.money(month.salary)}${b.opening > 0 ? ` + الرصيد السابق ${Utils.money(b.opening)}` : ''}${b.boosts > 0 ? ` + إضافات ${Utils.money(b.boosts)}` : ''} − المصاريف الشهرية ${Utils.money(b.fixedTotal)}${b.fixedUnpaid > 0 ? ` (غير المدفوع منها ${Utils.money(b.fixedUnpaid)})` : ''} − المستهدف ${Utils.money(month.retainTarget)}${b.priorSpent > 0 ? ` − المصروف قبل بدء التسجيل ${Utils.money(b.priorSpent)}` : ''}${b.outflows > 0 ? ` − المحوّل للصناديق ${Utils.money(b.outflows)}` : ''} = عجز ${Utils.money(b.shortfall)}. خفّض المبلغ المستهدف أو راجع المصاريف الشهرية (إذا كانت مدفوعة ضمن المصروف السابق فعلّمها كمدفوعة واخصمها من المصروف السابق).</p></div>` : ''}
 
       <div class="dash-top">
         <section class="hero status-${status}" aria-label="ميزانية اليوم">
@@ -1399,7 +1406,7 @@ const Pages = {
               <div class="detail-box"><span>المتبقي للأيام القادمة</span><strong class="${b.dailyRemaining < 0 ? 'over-text' : ''}">${Utils.money(b.dailyRemaining)}</strong></div>
               <div class="detail-box"><span>الحصة الأساسية يوميًا</span><strong>${Utils.money(b.perDayBase)}</strong></div>
             </div>
-            ${b.outflows > 0 ? `<p class="field-hint" style="margin:-6px 0 12px">الراتب ${Utils.money(month.salary)} − المصاريف الشهرية ${Utils.money(b.fixedTotal)} − المستهدف ${Utils.money(month.retainTarget)} − المحوّل للصناديق ${Utils.money(b.outflows)}${b.boosts > 0 ? ` + إضافات ${Utils.money(b.boosts)}` : ''}</p>` : ''}
+            ${b.outflows > 0 || b.opening > 0 ? `<p class="field-hint" style="margin:-6px 0 12px">الراتب ${Utils.money(month.salary)}${b.opening > 0 ? ` + الرصيد السابق ${Utils.money(b.opening)}` : ''} − المصاريف الشهرية ${Utils.money(b.fixedTotal)} − المستهدف ${Utils.money(month.retainTarget)} − المحوّل للصناديق ${Utils.money(b.outflows)}${b.boosts > 0 ? ` + إضافات ${Utils.money(b.boosts)}` : ''}</p>` : ''}
             ${C.progress(poolUsedPct, poolTone)}
             <div class="progress-meta"><span>استهلكت ${poolUsedPct.toFixed(0)}% من ميزانية المصروف اليومي</span><span>${Utils.percent(b.totalDays - daysLeft + 1, b.totalDays).toFixed(0)}% من الشهر</span></div>
           </section>
@@ -2569,8 +2576,8 @@ const Forms = {
       Forms.showErrors(form, { retainTarget: 'المبلغ المستهدف يجب أن يكون أقل من الراتب.' });
       return;
     }
-    if (values.priorSpent > values.salary) {
-      Forms.showErrors(form, { priorSpent: 'المبلغ أكبر من الراتب.' });
+    if (values.priorSpent > values.salary + values.openingBalance) {
+      Forms.showErrors(form, { priorSpent: 'المبلغ أكبر من الراتب والرصيد السابق.' });
       return;
     }
     Object.assign(state.settings, {
@@ -3205,7 +3212,24 @@ const App = {
     App.bindEvents();
     App.lastDay = DateUtils.today();
     App.render();
+    App.handleLaunchAction();
     App.registerServiceWorker();
+  },
+
+  /**
+   * اختصارات الشاشة الرئيسية: فتح التطبيق بالرابط ?action=add-expense
+   * يفتح نافذة إضافة مصروف مباشرة ثم يُنظّف الرابط.
+   */
+  handleLaunchAction() {
+    const params = new URLSearchParams(location.search);
+    const action = params.get('action');
+    if (!action) return;
+    params.delete('action');
+    const query = params.toString();
+    history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + (location.hash || '#dashboard'));
+    if (!state.settings.setupDone) return;
+    if (action === 'add-expense') Actions['add-expense']();
+    else if (action === 'salary') Actions['salary-arrived']();
   },
 
   renderNav() {
